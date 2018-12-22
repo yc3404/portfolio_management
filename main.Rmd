@@ -1,0 +1,792 @@
+---
+title: "5261 Final Project"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+    number_sections: true
+    code_folding: hide
+---
+
+Yang Cai, Rui Hu, Lin Wu, Yushu Wu
+
+GR5261: Statistical Methods in Finance
+
+<style type="text/css">
+h1.title {
+  font-size: 24px;
+  color: Black;
+}
+h1 { /* Header 1 */
+  font-size: 24px;
+  color: Black;
+}
+h2 { /* Header 2 */
+  font-size: 20px;
+  color: Black;
+}
+h3 { /* Header 3 */
+  font-size: 16px;
+  color: Black;
+}
+h4 { /* Header 4 */
+  font-size: 14px;
+  color: Grey;
+}
+</style>
+# Summary {-}
+This report presents an analysis for the recent 5 years data of 10 companies, Apple, Amazon, Bank of America, Facebook, Google, IBM, JP Morgan, Microsoft, Target and Walmart. Also, Monthly closing price from November 11, 2013 to November 11, 2018 are used to compute monthly returns of each company for the further analysis. The report contains 5 statistical analysis parts separated by the topics(pca, copula, portfolio theory, asset allocation, risk management) and a data distribution part.
+
+# Section 1. Load library and data
+```{r data,warning=FALSE,message=FALSE}
+#please go to Session-Set Working directory-To Source file location before running this code chunk
+#load library
+if (!require("moments")) install.packages("moments");library(moments)
+if (!require("DT")) install.packages("DT");library(DT)
+if (!require("dplyr")) install.packages("dplyr");library(dplyr)
+if (!require("ggplot2")) install.packages("ggplot2");library(ggplot2)
+if (!require("gridExtra")) install.packages("gridExtra");library(gridExtra)
+if (!require("lubridate")) install.packages("lubridate");library(lubridate)
+if (!require("reshape2")) install.packages("reshape2");library(reshape2)
+if (!require("GGally")) install.packages("GGally");library(GGally)
+if (!require("tseries")) install.packages("tseries");library(tseries)
+if (!require("PerformanceAnalytics")) install.packages("PerformanceAnalytics");library(PerformanceAnalytics)
+if (!require("mnormt")) install.packages("mnormt");library(mnormt)
+if (!require("sn")) install.packages("sn");library(sn)
+if (!require("copula")) install.packages("copula");library(copula)
+source('portfolio.R')
+
+#load stock price data 
+aapl = read.csv("AAPL.csv")
+amzn = read.csv("AMZN.csv")
+bac = read.csv("BAC.csv")
+fb = read.csv("FB.csv")
+goog = read.csv("GOOG.csv")
+ibm = read.csv("IBM.csv")
+jpm = read.csv("JPM.csv")
+msft = read.csv("MSFT.csv")
+tgt = read.csv("TGT.csv")
+wmt = read.csv("WMT.csv")
+sp500 = read.csv("SP500.csv")
+riskfree = read.csv("TB4WK.csv")
+
+#concatenate close prices
+df <- cbind(aapl['Close'],amzn['Close'],bac['Close'],fb['Close'],
+            goog['Close'],ibm['Close'],jpm['Close'],msft['Close'],
+            tgt['Close'],wmt['Close'])
+colnames(df) <- list('aapl','amzn','bac','fb','goog',
+                     'ibm','jpm','msft','tgt','wmt')
+
+#prepare a dataframe with Date and Close price
+date <- aapl$Date
+df_d <- data.frame(df) %>% mutate(Date=date)
+df_d <- df_d[c("Date","aapl","amzn","bac","fb","goog","ibm","jpm","msft","tgt","wmt")]
+
+
+#calculate stock returns
+df <- data.matrix(df)
+return <- matrix(nrow = 60,ncol = 10)
+for(i in 1:10){
+  return[,i] = exp(diff(log(df[,i]))) - 1
+}
+colnames(return) <- list('aapl','amzn','bac','fb','goog',
+                     'ibm','jpm','msft','tgt','wmt')
+
+#prepare a dataframe with Date and returns
+date1<- aapl$Date[1:60]
+re_d <- data.frame(return)%>%mutate(Date=date1)
+re_d <- re_d[c("Date","aapl","amzn","bac","fb","goog","ibm","jpm","msft","tgt","wmt")]
+
+#S&P 500 return
+df_benchmark <- sp500['Close']
+return_b <- matrix(NA,nrow=60,ncol=1)
+return_b[,1] <- exp(diff(log(df_benchmark$Close))) - 1
+```
+
+# Section 2. Descriptive Statistics
+
+## Sample statistics for returns
+
+Here is the table of mean, standard deviation, skewness coefficients, kurtosis coefficients and beta of each asset.
+```{r descriptive}
+#report sample statistics
+sample_stats <- data.frame(matrix(NA,ncol=5,nrow=10))
+rownames(sample_stats) <- c("Apple","Amazon","Bank of America","Facebook","Google","IBM","JP Morgan","Microsoft","Target","Walmart")
+colnames(sample_stats) <- c("Mean","Standard deviation","Skewness","Kurtosis","Beta")
+
+for (i in 1:10){
+  sample_stats[i,1] <- round(mean(return[,i]),3)
+  sample_stats[i,2] <- round(sd(return[,i]),3)
+  sample_stats[i,3] <- round(skewness(return[,i]),3)
+  sample_stats[i,4] <- round(kurtosis(return[,i]),3)
+  sample_stats[i,5] <- round(lm(return[,i]~return_b[,1])$coefficients[[2]],3)
+}
+
+datatable(sample_stats,caption = "Table 1: Sample statistics for returns",class = "cell-border stripe")
+```
+
+## Plot of monthly prices and returns
+
+```{r descriptive plot,warning=FALSE}
+#plot monthly prices & returns
+#Apple monthly price
+df_a <- subset(df_d,select=c("Date","aapl"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+df_a$Date <- as.Date(df_d$Date)
+gg_a <- ggplot(data = df_a, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=aapl))+scale_fill_gradient(low='white',high = 'dark green')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Monthly price for Apple")+theme(axis.text.x = element_text(angle=330))
+
+#Apple return
+return_a <- subset(re_d,select=c("Date","aapl"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+return_a$Date <- as.Date(re_d$Date)
+gg_a_d <- ggplot(data = return_a, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=aapl))+scale_fill_gradient(low='white',high = 'dark green')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Return for Apple")+theme(axis.text.x = element_text(angle=330))
+
+grid.arrange(gg_a,gg_a_d,ncol=2)
+
+#Amazon monthly price
+df_az <- subset(df_d,select=c("Date","amzn"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+df_az$Date <- as.Date(df_d$Date)
+gg_az <- ggplot(data = df_az, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=amzn))+scale_fill_gradient(low='white',high = 'dark orange')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Monthly price for Amazon")+theme(axis.text.x = element_text(angle=330))
+
+#Amazon return
+return_az <- subset(re_d,select=c("Date","amzn"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+return_az$Date <- as.Date(re_d$Date)
+gg_az_d <- ggplot(data = return_az, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=amzn))+scale_fill_gradient(low='white',high = 'dark orange')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Return for Amazon")+theme(axis.text.x = element_text(angle=330))
+
+grid.arrange(gg_az,gg_az_d,ncol=2)
+
+#Bank of America monthly price
+df_ac <- subset(df_d,select=c("Date","bac"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+df_ac$Date <- as.Date(df_d$Date)
+gg_ac <- ggplot(data = df_ac, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=bac))+scale_fill_gradient(low='white',high = 'dark red')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Monthly price for Bank of America")+theme(axis.text.x = element_text(angle=330))
+
+#Bank of America return
+return_ac <- subset(re_d,select=c("Date","bac"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+return_ac$Date <- as.Date(re_d$Date)
+gg_ac_d <- ggplot(data = return_ac, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=bac))+scale_fill_gradient(low='white',high = 'dark red')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Return for Bank of America")+theme(axis.text.x = element_text(angle=330))
+
+grid.arrange(gg_ac,gg_ac_d,ncol=2)
+
+#Facebook monthly prices
+df_fb <- subset(df_d,select=c("Date","fb"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+df_fb$Date <- as.Date(df_d$Date)
+gg_fb <- ggplot(data = df_fb, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=fb))+scale_fill_gradient(low='white',high = 'steel blue')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Monthly price for Facebook")+theme(axis.text.x = element_text(angle=330))
+
+#Facebook return
+return_fb <- subset(re_d,select=c("Date","fb"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+return_fb$Date <- as.Date(re_d$Date)
+gg_fb_d <- ggplot(data = return_fb, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=fb))+scale_fill_gradient(low='white',high = 'steel blue')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Return for Facebook")+theme(axis.text.x = element_text(angle=330))
+
+grid.arrange(gg_fb,gg_fb_d,ncol=2)
+
+#Google monthly prices
+df_gg <- subset(df_d,select=c("Date","goog"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+df_gg$Date <- as.Date(df_d$Date)
+gg_gg <- ggplot(data = df_gg, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=goog))+scale_fill_gradient(low='white',high = 'dark blue')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Monthly price for Google")+theme(axis.text.x = element_text(angle=330))
+
+#Google return
+return_gg <- subset(re_d,select=c("Date","goog"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+return_gg$Date <- as.Date(re_d$Date)
+gg_gg_d <- ggplot(data = return_gg, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=goog))+scale_fill_gradient(low='white',high = 'dark blue')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Return for Google")+theme(axis.text.x = element_text(angle=330))
+
+grid.arrange(gg_gg,gg_gg_d,ncol=2)
+
+#IBM monthly prices
+df_ib <- subset(df_d,select=c("Date","ibm"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+df_ib$Date <- as.Date(df_d$Date)
+gg_ib <- ggplot(data = df_ib, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=ibm))+scale_fill_gradient(low='white',high = ' black')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Monthly price for IBM")+theme(axis.text.x = element_text(angle=330))
+
+#IBM return
+return_ib <- subset(re_d,select=c("Date","ibm"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+return_ib$Date <- as.Date(re_d$Date)
+gg_ib_d <- ggplot(data = return_ib, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=ibm))+scale_fill_gradient(low='white',high = 'black')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Return for IBM")+theme(axis.text.x = element_text(angle=330))
+
+grid.arrange(gg_ib,gg_ib_d,ncol=2)
+
+#JP Morgan monthly prices
+df_jp <- subset(df_d,select=c("Date","jpm"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+df_jp$Date <- as.Date(df_d$Date)
+gg_jp <- ggplot(data = df_jp, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=jpm))+scale_fill_gradient(low='white',high ='dodgerblue4')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Monthly price for JP Morgan")+theme(axis.text.x = element_text(angle=330))
+
+#JP Morgan return
+return_jp <- subset(re_d,select=c("Date","jpm"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+return_jp$Date <- as.Date(re_d$Date)
+gg_jp_d <- ggplot(data = return_jp, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=jpm))+scale_fill_gradient(low='white',high = 'dodgerblue4')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Return for JP Morgan")+theme(axis.text.x = element_text(angle=330))
+
+grid.arrange(gg_jp,gg_jp_d,ncol=2)
+
+#Microsoft monthly prices
+df_ms <- subset(df_d,select=c("Date","msft"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+df_ms$Date <- as.Date(df_d$Date)
+gg_ms <- ggplot(data = df_ms, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=msft))+scale_fill_gradient(low='white',high ='deepskyblue4')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Monthly price for Microsoft")+theme(axis.text.x = element_text(angle=330))
+
+#Microsoft return
+return_ms <- subset(re_d,select=c("Date","msft"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+return_ms$Date <- as.Date(re_d$Date)
+gg_ms_d <- ggplot(data = return_ms, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=msft))+scale_fill_gradient(low='white',high = 'deepskyblue4')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Return for Microsoft")+theme(axis.text.x = element_text(angle=330))
+
+grid.arrange(gg_ms,gg_ms_d,ncol=2)
+
+#Target monthly prices
+df_tg <- subset(df_d,select=c("Date","tgt"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+df_tg$Date <- as.Date(df_d$Date)
+gg_tg <- ggplot(data = df_tg, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=tgt))+scale_fill_gradient(low='white',high ='firebrick3')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Monthly price for Target")+theme(axis.text.x = element_text(angle=330))
+
+#Target return
+return_tg <- subset(re_d,select=c("Date","tgt"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+return_tg$Date <- as.Date(re_d$Date)
+gg_tg_d <- ggplot(data = return_tg, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=tgt))+scale_fill_gradient(low='white',high = 'firebrick3')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Return for Target")+theme(axis.text.x = element_text(angle=330))
+
+grid.arrange(gg_tg,gg_tg_d,ncol=2)
+
+#Target monthly prices
+df_wmt <- subset(df_d,select=c("Date","wmt"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+df_wmt$Date <- as.Date(df_d$Date)
+gg_wmt <- ggplot(data = df_wmt, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=wmt))+scale_fill_gradient(low='white',high ='cornflowerblue')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Monthly price for Walmart")+theme(axis.text.x = element_text(angle=330))
+
+#Walmart return
+return_wmt <- subset(re_d,select=c("Date","wmt"))%>%mutate(month=month(Date))%>%mutate(year=year(Date))
+return_wmt$Date <- as.Date(re_d$Date)
+gg_wmt_d <- ggplot(data = return_wmt, aes(x = as.factor(month), y = as.factor(year))) +
+  geom_tile(aes(fill=wmt))+scale_fill_gradient(low='white',high = 'cornflowerblue')+scale_x_discrete(labels=c('Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'))+scale_y_discrete(labels=c(2013,2014,2015,2016,2017,2018))+ylab("Year")+xlab("Month")+labs(title="Return for Walmart")+theme(axis.text.x = element_text(angle=330))
+
+grid.arrange(gg_wmt,gg_wmt_d,ncol=2)
+
+
+```
+
+## Histograms
++ Histograms for 10 assets
+```{r des hist}
+#histogram for Apple
+h_a <- ggplot(data=return_a,aes(x=aapl))+geom_histogram(aes(y=..density..),binwidth = 0.01,color='dark green',fill='white',alpha=0.5)+
+ geom_density(alpha=.2, color='dark green',fill="chartreuse3")+xlab("Monthly return for Apple")
+#histogram for Amazon
+h_az <- ggplot(data=return_az,aes(x=amzn))+geom_histogram(aes(y=..density..),binwidth = 0.01,color='dark orange',fill='white',alpha=0.5)+
+ geom_density(alpha=.2, color='dark orange',fill="chocolate1")+xlab("Monthly return for Amazon")
+#histogram for Bank of America
+h_ba <- ggplot(data=return_ac,aes(x=bac))+geom_histogram(aes(y=..density..),binwidth = 0.01,color='dark red',fill='white',alpha=0.5)+
+ geom_density(alpha=.2, color='dark red',fill="darksalmon")+xlab("Monthly return for Bank of America")
+#histogram for Facebook
+h_fb <- ggplot(data=return_fb,aes(x=fb))+geom_histogram(aes(y=..density..),binwidth = 0.01,color='steel blue',fill='white',alpha=0.5)+
+ geom_density(alpha=.2, color='steel blue',fill="lightblue1")+xlab("Monthly return for Facebook")
+#histogram for Google
+h_gg <- ggplot(data=return_gg,aes(x=goog))+geom_histogram(aes(y=..density..),binwidth = 0.01,color='dark blue',fill='white',alpha=0.5)+
+ geom_density(alpha=.2, color='dark blue',fill="lightsteelblue1")+xlab("Monthly return for Google")
+#histogram for IBM
+h_ib <- ggplot(data=return_ib,aes(x=ibm))+geom_histogram(aes(y=..density..),binwidth = 0.01,color='black',fill='white',alpha=0.5)+
+ geom_density(alpha=.2, color='black',fill="grey")+xlab("Monthly return for IBM")
+#histogram for JP Morgan
+h_jp <- ggplot(data=return_jp,aes(x=jpm))+geom_histogram(aes(y=..density..),binwidth = 0.01,color='dodgerblue4',fill='white',alpha=0.5)+
+ geom_density(alpha=.2, color='dodgerblue4',fill="steelblue1")+xlab("Monthly return for JP Morgan")
+#histogram for Microsoft
+h_ms <- ggplot(data=return_ms,aes(x=msft))+geom_histogram(aes(y=..density..),binwidth = 0.01,color='deepskyblue4',fill='white',alpha=0.5)+
+ geom_density(alpha=.2, color='deepskyblue4',fill="powderblue")+xlab("Monthly return for Microsoft")
+#histogram for Target
+h_tgt <- ggplot(data=return_tg,aes(x=tgt))+geom_histogram(aes(y=..density..),binwidth = 0.01,color='firebrick3',fill='white',alpha=0.5)+
+ geom_density(alpha=.2, color='firebrick3',fill="indianred2")+xlab("Monthly return for Target")
+#histogram for Walmart
+h_wmt <- ggplot(data=return_wmt,aes(x=wmt))+geom_histogram(aes(y=..density..),binwidth = 0.01,color='cornflowerblue',fill='white',alpha=0.5)+
+ geom_density(alpha=.2, color='cornflowerblue',fill="aliceblue")+xlab("Monthly return for Walmart")
+grid.arrange(h_a,h_az,ncol=2)
+grid.arrange(h_ba,h_fb,ncol=2)
+grid.arrange(h_gg,h_ib,ncol=2)
+grid.arrange(h_jp,h_ms,ncol=2)
+grid.arrange(h_tgt,h_wmt,ncol=2)
+
+```
+
+## Boxplots
++ Boxplots for 10 assets
+```{r descriptive box}
+m1 <- melt(return)
+ggplot(data=m1,aes(x=Var2,y=value,color=Var2,fill=Var2))+geom_boxplot(alpha=0.5,outlier.color='red',outlier.shape = 19)+xlab("Asset names")+scale_x_discrete(labels=c("Apple","Amazon","Bank of America","Facebook","Google","IBM","JP Morgan","Microsoft","Target","Walmart"))+ylab("Returns")
+```
+
+## QQ Plot
++ QQplots for 10 assets
+```{r descriptive qq}
+#qqplot for apple
+q_a <- ggplot(data.frame(return), aes(sample=aapl))+stat_qq(color='dark green')+labs(title="QQ plot for Apple")+theme_minimal()
+#qqplot for amazon
+q_az <- ggplot(data.frame(return), aes(sample=amzn))+stat_qq(color='dark orange')+labs(title="QQ plot for Amazon")+theme_minimal()
+#qqplot for BOA
+q_ac <-ggplot(data.frame(return), aes(sample=bac))+stat_qq(color='dark red')+labs(title="QQ plot for Bank of America")+theme_minimal()
+#qqplot for Facebook
+q_fb <- ggplot(data.frame(return), aes(sample=fb))+stat_qq(color='steel blue')+labs(title="QQ plot for Facebook")+theme_minimal()
+#qqplot for Google
+q_gg <- ggplot(data.frame(return), aes(sample=goog))+stat_qq(color='dark blue')+labs(title="QQ plot for Google")+theme_minimal()
+#qqplot for IBM
+q_ib <- ggplot(data.frame(return), aes(sample=ibm))+stat_qq()+labs(title="QQ plot for IBM")+theme_minimal()
+#qqplot for JP Morgan
+q_jp <- ggplot(data.frame(return), aes(sample=jpm))+stat_qq(color='dodgerblue4')+labs(title="QQ plot for JP Morgan")+theme_minimal()
+#qqplot for Microsoft
+q_ms <- ggplot(data.frame(return), aes(sample=msft))+stat_qq(color='deepskyblue4')+labs(title="QQ plot for Microsoft")+theme_minimal()
+#qqplot for Target
+q_tg <- ggplot(data.frame(return), aes(sample=tgt))+stat_qq(color='firebrick3')+labs(title="QQ plot for Target")+theme_minimal()
+#qqplot for Walmart
+q_wmt <- ggplot(data.frame(return), aes(sample=wmt))+stat_qq(color='cornflowerblue')+labs(title="QQ plot for Walmart")+theme_minimal()
+grid.arrange(q_a,q_az,ncol=2)
+grid.arrange(q_ac,q_fb,ncol=2)
+grid.arrange(q_gg,q_ib,ncol=2)
+grid.arrange(q_jp,q_ms,ncol=2)
+grid.arrange(q_tg,q_wmt,ncol=2)
+```
+
+## Pairwise scatter plots
+Construct pairwise scatter plots for 10 assets.
+```{r descriptive scatter}
+ggpairs(data=data.frame(return))
+```
+
+
+## Covariance matrix
+```{r desscriptive matrix}
+datatable(round(cov(return),5),caption = "Table 2: Sample covariance matrix on the returns",class="cell-border stripe")
+```
+
+
+# Section 3. Principal Component Analysis
+```{r PCA}
+#sample correlation matrix of returns
+corr <- cor(df)
+#msft and amzn has max correlation 0.9831232
+#fb and ibm has minimum correlation -0.5771376
+
+
+#pca
+pca <- princomp(df,cor=T)
+pca
+pca$loadings
+summary(pca)
+```
+
+# Section 4. Copulas
+```{r copula, warning=FALSE}
+#library&data
+library(copula)
+library(sn)
+dat = return
+n = 600
+x1 = dat[,1]
+x2 = dat[,2]
+x3 = dat[,3]
+x4 = dat[,4]
+x5 = dat[,5]
+x6 = dat[,6]
+x7 = dat[,7]
+x8 = dat[,8]
+x9 = dat[,9]
+x10 = dat[,10]
+
+#nonparametric
+edata= cbind(rank(x1)/(n + 1), rank(x2)/(n + 1), rank(x3)/(n + 1),
+rank(x4)/(n + 1),rank(x5)/(n + 1),rank(x6)/(n + 1),rank(x7)/(n + 1),rank(x8)/(n + 1),rank(x9)/(n + 1),rank(x10)/(n + 1))
+
+#correlation
+corM <- cor(return,method = "spearman")
+cor45 <- c(corM[1,2:10],corM[2,3:10],corM[3,4:10],corM[4,5:10],corM[5,6:10],corM[6,7:10],corM[7,8:10],corM[8,9:10],corM[9,10])
+
+#fit copulas
+fn = fitCopula(copula=normalCopula(dim = 10), data=edata,
+method="ml", start=c(min(cor45)))
+ft = fitCopula(copula=tCopula(dim = 10), data=edata,
+method="ml", start=c(min(cor45),10))
+clcop=archmCopula(family="clayton", dim=10, param=2)
+fclayton = fitCopula(data=edata,method="ml", copula=clcop)
+gcop=archmCopula(family="gumbel", dim=10, param=2)
+fgumbel = fitCopula(data=edata,method="ml", copula=gcop)
+
+#results
+fn
+ft
+fclayton
+fgumbel
+
+AIC(fn)
+AIC(ft)
+AIC(fclayton)
+AIC(fgumbel)
+```
+
+# Section 5. Portfolio Theory
+
+## Minimum Variance Portfolio
+
+The mean of the MVP is 0.00918.
+The standard deviation of the MVP is 0.00084.
+The weights are 0.060 -0.080 -0.176  0.169  0.173  0.100  0.454 -0.011  0.047  0.265.
+Annualized mean and risk are 0.11 and 0.0029.
+```{r portfolio}
+#compute mean and covariance matrix for the portfolio
+mu <- sample_stats$Mean
+omega <- cov(return)
+vector_1 = rep(1, 10)
+omega_inv <- solve(omega)
+
+#compute MVP
+w_mvp = as.numeric(omega_inv%*%vector_1)/as.numeric(t(vector_1)%*%omega_inv%*%vector_1)
+
+#weights 
+round(w_mvp, 3)
+
+# mean
+m <- sum(w_mvp*mu)
+m
+
+#annualized mean
+12*m
+
+# standard deviation
+s <- t(w_mvp)%*%omega%*%w_mvp
+s
+
+#annualized standard deviation
+s*sqrt(12)
+```
+
+## Value at risk and expect shortfall
+
+Assume that you have $100,000 to invest. For the MVP, determine the 5% value-at-risk of the
+$100,000 investment over a one month investment horizon. 
+```{r portfolio VaR}
+#VaR for MVP
+loglik = function(par, data) {
+  mu = par[1:10]
+  scale_matrix = t(A) %*% A
+  df = par[66]
+  return(-sum(log(dmt(data, mean = mu, S = scale_matrix, df = df))))}
+A = chol(cov(return))
+start = as.vector(c(apply(return, 2, mean), A[1, 1], A[1, 2],A[1,3],A[1,4],A[1,5],A[1,6],A[1,7],A[1,8],A[1,9],A[1,10],A[2, 2],A[2,3],A[2,4],A[2,5],A[2,6],A[2,7],A[2,8],A[2,9],A[2,10],A[3,3],A[3,4],A[3,5],A[3,6],A[3,7],A[3,8],A[3,9],A[3,10],A[4,4],A[4,5],A[4,6],A[4,7],A[4,8],A[4,9],A[4,10],A[5,5],A[5,6],A[5,7],A[5,8],A[5,9],A[5,10],A[6,6],A[6,7],A[6,8],A[6,9],A[6,10],A[7,7],A[7,8],A[7,9],A[7,10],A[8,8],A[8,9],A[8,10],A[9,9],A[9,10],A[10,10],100))
+fit_mvt = optim(start, loglik, data = return, method = "L-BFGS-B", hessian = T)
+
+nu <- fit_mvt$par[66]
+alpha <- 0.05
+lambda =   s/sqrt( (nu)/(nu-2) )
+qalpha = qt(alpha, df = nu)
+Finv = m + lambda * qalpha
+S <- 100000
+VaR = -S * Finv
+VaR
+
+#VaR for each asset
+var <- matrix(NA,ncol=1,nrow=10)
+rownames(var) <- c("Apple","Amazon","Bank of America","Facebook","Google","IBM","JP Morgan","Microsoft","Target","Walmart")
+colnames(var) <- "VaR(0.05) with $100,000 investment"
+var[1,]<- 100000*VaR(return_a$aapl)
+var[2,]<- 100000*VaR(return_az$amzn)
+var[3,]<- 100000*VaR(return_ac$bac)
+var[4,]<- 100000*VaR(return_fb$fb)
+var[5,]<- 100000*VaR(return_gg$goog)
+var[6,]<- 100000*VaR(return_ib$ibm)
+var[7,]<- 100000*VaR(return_jp$jpm)
+var[8,]<- 100000*VaR(return_ms$msft)
+var[9,]<- 100000*VaR(return_tg$tgt)
+var[10,]<- 100000*VaR(return_wmt$wmt)
+
+var
+```
+
+
+## Sharpe Ratio for each asset
+```{r portfolio sharpe}
+rf <- mean(riskfree$TB4WK/144)
+sd <- sample_stats$`Standard deviation`
+
+sharpe <- matrix(NA,nrow=10,ncol=1)
+rownames(sharpe) <- c("Apple","Amazon","Bank of America","Facebook","Google","IBM","JP Morgan","Microsoft","Target","Walmart")
+colnames(sharpe) <- "Sharpe Ratio"
+for (i in 1:10){
+sharpe[i,] <- (mu[i]-rf)/sd[i]
+}
+
+sharpe
+```
+## Tangency portfolio (no short sales allowed)
+
+The expected return on tangency portfolio is 0.0196.
+The standard deviation is 0.04.
+The variance is 0.04^2=0.016.
+The Sharpe ratio is 0.376.
+```{r portfolio tangency}
+#convert risk free to monthly
+rf <- mean(riskfree$TB4WK/144)
+t1 <- tangency.portfolio(er=mu,cov.mat=omega,risk.free = rf,shorts = F)
+t1
+#calculate Sharpe ratio
+(t1$er-rf)/t1$sd
+```
+
+# Section 6. Asset Allocation
+
+## Efficient Portfolio
+Target portfolio 1 contains only risky assets and no short sales allowed.
+The target expected return is 0.005 per month.
+The standard deviation (montyly risk) of this portfolio is 0.03283963.
+The weights are 0.000 0.000 0.000  0.095  0.075  0.312  0.101 0.000 0.093 0.325.
+```{r asset1}
+#Risky assets and no shorts with montyly expected return 0.5%
+#Portfolio1
+target <- 0.005
+port1 <- efficient.portfolio(mu, omega, target, shorts = F)
+port1
+
+#Weight of Portfolio1
+weight1 <- matrix(NA,nrow=10,ncol=1)
+rownames(weight1) <- c("Apple","Amazon","Bank of America","Facebook","Google","IBM","JP Morgan","Microsoft","Target","Walmart")
+colnames(weight1) <- "Weight"
+for (i in 1:10){
+weight1[i] <- port1$weights[i]
+}
+
+weight1
+
+#Investment
+invest1 <- c(rep(NA,10))
+
+for (i in 1:10) {
+  invest1[i] <- 100000*port1$weights[i]
+}
+weight1 <- cbind(weight1, invest1)
+colnames(weight1) <- c("Weight", "Investment")
+weight1
+
+#Value at Risk
+loglik = function(par, data) {
+  mu = par[1:10]
+  scale_matrix = t(A) %*% A
+  df = par[66]
+  return(-sum(log(dmt(data, mean = mu, S = scale_matrix, df = df))))}
+A = chol(cov(return))
+start = as.vector(c(apply(return, 2, mean), A[1, 1], A[1, 2],A[1,3],A[1,4],A[1,5],A[1,6],A[1,7],A[1,8],A[1,9],A[1,10],A[2, 2],A[2,3],A[2,4],A[2,5],A[2,6],A[2,7],A[2,8],A[2,9],A[2,10],A[3,3],A[3,4],A[3,5],A[3,6],A[3,7],A[3,8],A[3,9],A[3,10],A[4,4],A[4,5],A[4,6],A[4,7],A[4,8],A[4,9],A[4,10],A[5,5],A[5,6],A[5,7],A[5,8],A[5,9],A[5,10],A[6,6],A[6,7],A[6,8],A[6,9],A[6,10],A[7,7],A[7,8],A[7,9],A[7,10],A[8,8],A[8,9],A[8,10],A[9,9],A[9,10],A[10,10],100))
+fit_mvt = optim(start, loglik, data = return, method = "L-BFGS-B", hessian = T)
+
+nu <- fit_mvt$par[66]
+alpha <- 0.05
+lambda =   s/sqrt( (nu)/(nu-2) )
+qalpha = qt(alpha, df = nu)
+m <- sum(port1$weights*mu)
+Finv = m + lambda * qalpha
+S <- 100000
+VaR = -S * Finv
+VaR
+
+
+```
+
+## Tangency Portfolio with T-bill
+Target portfolio 2 contains both risky assets and T-bills, no short sales allowed.
+The target expected return is 0.005 per month.
+The standard deviation (montyly risk) of this portfolio is 0.003.
+The weights for risky assets are 0.005 0.015 0.000  0.024  0.000  0.000  0.017 0.015 0.000 0.001 and the weight for T-bill is 0.923.
+```{r asset2}
+#Portfolio2
+port2 <- tangency.portfolio(mu, omega, rf,shorts = F)
+port2
+
+mu.t <- as.numeric(crossprod(port2$weights, mu))
+w.tan <- (target-rf)/(mu.t-rf)
+weight.tbill <- 1-w.tan
+weight.tbill
+
+weight.tan <- w.tan*port2$weights
+
+#Weight of Portfolio1
+weight2 <- matrix(NA,nrow=11,ncol=1)
+rownames(weight2) <- c("Apple","Amazon","Bank of America","Facebook","Google","IBM","JP Morgan","Microsoft","Target","Walmart","T-bill")
+colnames(weight2) <- "Weight"
+for (i in 1:10){
+weight2[i] <- weight.tan[i]
+}
+weight2[11] <- weight.tbill
+weight2
+
+expmu <- w.tan*mu.t+weight.tbill*rf
+expmu
+
+expsigma <- w.tan*port2$sd
+expsigma
+
+#Investment
+invest2 <- c(rep(NA,11))
+
+for (i in 1:11) {
+  invest2[i] <- 100000*weight2[i]
+}
+weight2 <- cbind(weight2, invest2)
+colnames(weight2) <- c("Weight", "Investment")
+weight2
+
+
+#Value at Risk
+loglik = function(par, data) {
+  mu = par[1:10]
+  scale_matrix = t(A) %*% A
+  df = par[66]
+  return(-sum(log(dmt(data, mean = mu, S = scale_matrix, df = df))))}
+A = chol(cov(return))
+start = as.vector(c(apply(return, 2, mean), A[1, 1], A[1, 2],A[1,3],A[1,4],A[1,5],A[1,6],A[1,7],A[1,8],A[1,9],A[1,10],A[2, 2],A[2,3],A[2,4],A[2,5],A[2,6],A[2,7],A[2,8],A[2,9],A[2,10],A[3,3],A[3,4],A[3,5],A[3,6],A[3,7],A[3,8],A[3,9],A[3,10],A[4,4],A[4,5],A[4,6],A[4,7],A[4,8],A[4,9],A[4,10],A[5,5],A[5,6],A[5,7],A[5,8],A[5,9],A[5,10],A[6,6],A[6,7],A[6,8],A[6,9],A[6,10],A[7,7],A[7,8],A[7,9],A[7,10],A[8,8],A[8,9],A[8,10],A[9,9],A[9,10],A[10,10],100))
+fit_mvt = optim(start, loglik, data = return, method = "L-BFGS-B", hessian = T)
+
+nu <- fit_mvt$par[66]
+alpha <- 0.05
+lambda =   s/sqrt( (nu)/(nu-2) )
+qalpha = qt(alpha, df = nu)
+mu.p <- c(mu, rf)
+m <- sum(weight2[,1]*mu.p)
+Finv = m + lambda * qalpha
+S <- 100000
+VaR = -S * Finv
+VaR
+
+```
+
+
+# Section 7. Risk Management
+```{r risk}
+#nonparametric method for value at risk
+vaR.np <- function(l){
+  m <- 100000
+  q <- quantile(l,0.05)
+  return(-m*q)
+}
+
+#nonparametric method for expected shortfall
+es.np <- function(l){
+  m <- 100000
+  q <- quantile(l,0.05)
+  i <- (l < q)
+  return(-m*sum(l*i)/sum(i))
+}
+
+#bootstrap
+set.seed(1234567)
+B <- 1000
+n <- nrow(return)
+var.bootnp <- matrix(nrow=B,ncol=10)
+es.bootnp <- matrix(nrow=B,ncol=10)
+for(i in 1:B){
+  for(j in 1:10){
+    samp <- sample(return[,j],n,replace=T)
+    var.bootnp[i,j] <- vaR.np(samp)
+    es.bootnp[i,j] <- es.np(samp)
+  }
+}
+#standard errors
+name <- list('aapl','amzn','bac','fb','goog',
+             'ibm','jpm','msft','tgt','wmt')
+var.bootnp[is.na(var.bootnp)] <- 0
+mean.var.bootnp <- apply(var.bootnp,2,mean)
+se.var.bootnp <- apply(var.bootnp,2,sd)
+
+es.bootnp[is.na(es.bootnp)] <- 0
+mean.es.bootnp <- apply(es.bootnp,2,mean)
+se.es.bootnp <- apply(es.bootnp,2,sd)
+#95% ci
+min.ci.var.bootnp <- mean.var.bootnp-se.var.bootnp
+max.ci.var.bootnp <- mean.var.bootnp+se.var.bootnp
+
+min.ci.es.bootnp <- mean.es.bootnp-se.es.bootnp
+max.ci.es.bootnp <- mean.es.bootnp+se.es.bootnp
+
+
+#parametric method for value at risk
+vaR.p <- function(l){
+  m <- 100000
+  means <- mean(l)
+  se <- sd(l)
+  z <- qnorm(0.05)
+  return(m*(means+z*se)*(-1))
+}
+
+#parametric method for expected shortfall
+es.p <- function(l){
+  m <- 100000
+  means <- mean(l)
+  se <- sd(l)
+  z <- qnorm(0.05)
+  return(m*((-1)*means+dnorm(z)*se/0.05))
+}
+
+#bootstrap
+name <- list('aapl','amzn','bac','fb','goog',
+             'ibm','jpm','msft','tgt','wmt')
+set.seed(2345678)
+B <- 1000
+n <- nrow(return)
+var.bootp <- matrix(nrow=B,ncol=10)
+es.bootp <- matrix(nrow=B,ncol=10)
+for(i in 1:B){
+  for(j in 1:10){
+    samp <- sample(return[,j],n,replace=T)
+    var.bootp[i,j] <- vaR.p(samp)
+    es.bootp[i,j] <- es.p(samp)
+  }
+}
+#standard errors
+var.bootp[is.na(var.bootp)] <- 0
+mean.var.bootp <- apply(var.bootp,2,mean)
+se.var.bootp <- apply(var.bootp,2,sd)
+
+es.bootp[is.na(es.bootp)] <- 0
+mean.es.bootp <- apply(es.bootp,2,mean)
+se.es.bootp <- apply(es.bootp,2,sd)
+#95% ci
+min.ci.var.bootp <- mean.var.bootp-se.var.bootp
+max.ci.var.bootp <- mean.var.bootp+se.var.bootp
+
+min.ci.es.bootp <- mean.es.bootp-se.es.bootp
+max.ci.es.bootp <- mean.es.bootp+se.es.bootp
+
+
+#show list of results
+df1 <- data.frame(mean.var.bootp,se.var.bootp,min.ci.var.bootp,max.ci.var.bootp,
+                  mean.es.bootp,se.es.bootp,min.ci.es.bootp,max.ci.es.bootp)
+colnames(df1) <- c("var_mean","var_se","var_min_ci","var_max_ci",
+                   "es_mean","es_se","es_min_ci","es_max_ci")
+rownames(df1) <- c("aapl","amzn","bac","fb","goog",
+                   "ibm","jpm","msft","tgt","wmt")
+df2 <- data.frame(mean.var.bootnp,se.var.bootnp,min.ci.var.bootnp,max.ci.var.bootnp,
+                  mean.es.bootnp,se.es.bootnp,min.ci.es.bootnp,max.ci.es.bootnp)
+colnames(df2) <- c("var_mean","var_se","var_min_ci","var_max_ci",
+                   "es_mean","es_se","es_min_ci","es_max_ci")
+rownames(df2) <- c("aapl","amzn","bac","fb","goog",
+                   "ibm","jpm","msft","tgt","wmt")
+result <- list(df1,df2)
+names(result) <- c("parametric","nonparametric")
+result
+```
+
+# Section 8. Conclusion
+The goal of this project is to solidify our understanding of the financial statistics methods that learned from this course. We got a big picture of the data by conducting the descriptive statistics analysis, then we conducted principal component analysis and constructed copulas to check the results of descriptive statistics, after that we examined the performance of this portfolio in the portfolio theory section and compare it with the result from the asset allocation section. In the end, we used the nonparametric method discussed in class to estimate value at risk for all the portfolios in the risk management section.
+
+# Section 9. Contribution Statement
++ Yang Cai is responsible for descriptive statistics and portfolio theory.
++ Rui Hu is responsible for principal components analysis and risk management.
++ Lin Wu is responsible for asset allocation and conclusion.
++ Yushu Wu is responsible for copulas and summary.
+
+# Section 10. References
+
++  portfolio.R is a helper function written by Eric Zivot and Hezky Varon from U of Washington.
+
